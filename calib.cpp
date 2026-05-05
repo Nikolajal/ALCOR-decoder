@@ -7,10 +7,18 @@
 
 int rollover_counter = 0;//-1; // we start from -1 because the very first word is a rollover
 int n_tdc =4;
-#define UINT32_MAX  (0xffffffff)
-//mask names a misnomer; they are masks for fine/coarse and everything upwards of 24th bit
-uint32_t coarse_mask=UINT32_MAX-511;
-uint32_t fine_mask=UINT32_MAX-pow(2.0,24)+510;
+//#define UINT32_MAX  (0xffffffff)
+uint32_t clear_time=UINT32_MAX-0xFFFFFF;//FFF0000
+uint32_t fine_mask=0x1FF;//FFF0000
+constexpr uint32_t coarse_mask=0x7FFF;
+constexpr double EICCLK = 394.0;  // MHz
+constexpr double coarse_clock=3.125;
+constexpr double fine_binning=coarse_clock/511.;
+constexpr double FWF = static_cast<double>(0x1FF);
+constexpr double COARSE_LSB_PS = 1.E+6/EICCLK;
+constexpr double FINE_LSB_PS = COARSE_LSB_PS/static_cast<double>(0x1FF);
+
+constexpr double rollover = 0x5c5c5c5c;
 
 struct main_header_t {
   uint32_t caffe;
@@ -81,23 +89,40 @@ void dump(std::ofstream &fout, uint32_t* word){
       *word>>=8;
     }
 }
+//calibrating the coarse and fine times
+//this was written by the Professor
+uint32_t corine(double coarse, double* phase){
+  if (*phase < 0.) {
+    if (coarse!=0) {
+      coarse--;
+      *phase += 1.;
+    } else {
+      *phase = 0.;
+    }
+  } else if (*phase > 1.) {
+    if (coarse != 0x7FFF) {  // this is to avoid a roll-over/move to orbit+1 due to fine calibration
+      coarse++;
+      *phase -= 1.;
+    } else {
+      *phase = 1.;
+    }
+  }
+  return (uint32_t)coarse;
+}
 
 //dce-decode, calibrate, encode
 void dce(std::ofstream &fout, char *buffer, int size, double *par, int tdc)
 {
+  double a = 1./static_cast<double>(0x1FF);   /// with a = 1/FINEWIDTH and b = 0.5 we don't need calibration....
+  double b = 0.5;
   int n = size/4;
   auto word = (uint32_t *)buffer;
   //Maybe try to replace pos with a condition for NULL
   uint32_t pos = 0;
-  //integer value for correction of coarse
-  double ccorrection=0;
   // loop over buffer data, make this loop better
   while (pos < n) {
-    // find spill header if not in spill already
     while (!in_spill && pos < n) {
-
-      
-      if ((*word & 0xf0000000) == 0x70000000){ 
+      if ((*word & 0xf0000000) == 0x70000000){
         dump(fout,word);
         ++word; ++pos;
         dump(fout,word);
@@ -130,30 +155,17 @@ void dce(std::ofstream &fout, char *buffer, int size, double *par, int tdc)
 	break;
       }
       /** rollover **/
-      if (*word == 0x5c5c5c5c) {
+      if (*word == rollover) {
         //std::cout<<"here"<<std::endl;
                 dump(fout,word);
         ++word; ++pos;
         continue;
       }
       /** hit **/
-      //alcor_hit_t *hit = (alcor_hit_t *)word;
-      //figure out if its &hit or just hit below
-      //fout.write(reinterpret_cast<char*>(&hit),sizeof(alcor_hit_t));
-      std::cout<<*word<<std::endl;
-      //equation from decoder
-      double c_hit = ((*word>>9)&0b111111111111111) - par[tdc] + ((*word)&0b111111111) * par[tdc+4];
-      if(c_hit>max_calib)max_calib=c_hit;
-      if(c_hit<min_calib)min_calib=c_hit;
-      //Logic for the assignments below; convert TDC fine time to ns; get coarse and fine corrections as modulo and int;
-      //get calibrated TDC fine time back without the integer correction and overwrite fine time; apply coarse correction with calibrated time whole numbers
-      //in clock cycle time. The 9 bits of the fine time are intended to be in two's complement
-      //Assuming 24-bits (9 for signed calibrated time, 15 for coarse) for the entire calibrated time, comment this out to simply copy files
-      *word=((*word&coarse_mask)|fine_mask&(uint32_t)(round(modf(c_hit*0.0035,&ccorrection)/0.0035)));
-      *word=((*word&fine_mask)|((*word&coarse_mask>>9)+(int)(ccorrection/3.125))<<9);
+      //equation from compact.cc
+      double c_hit =  b + ((*word)&0x1FF) * a - 0.5;
+      *word=(*word&clear_time)|corine(*word&coarse_mask,&c_hit)|(uint32_t)c_hit;
             dump(fout,word);
-      
-
       ++word; ++pos;
     }
      
@@ -176,7 +188,7 @@ const std::string outfilename="calibtest.dat";
   int i=0;
   while(!pin.eof()) pin>>par[i++];
   pin.close();
-  std::cout<<"Here"<<std::endl;
+
   // copy this straight to file
   main_header_t main_header;
   fin.read((char *)&main_header, sizeof(main_header_t));
@@ -210,24 +222,19 @@ std::cout<<max_calib<<std::endl;
  std::cout<<"End"<<std::endl;
 }
 //There may not be a need in a rollover counter or spill flag
-//Get possible ranges of TDC parameters
 
 //New tasks:
-//Add sign bit or signed binary
 //modify decoder to accept calibrated time
-//From now on, fine will only take up 9 signed bits: if overrunning (i.e. 1.2), increment or decrement coarse counter,
-// coarse time cannot go to zero!
 
 //warning: signed int will not auto cast to char correctly, do not use
 //check for the ranges of the calibrated times, has to be 127 to -255
 
-//bins for the calibrated time in clock cycles are 0.002 wide, so have to remove msb from calibrated time if decimal, increment coarse and round up or down the lsb to 0.002
-
 //Each bit is 32768(rollover cycles)/23^2 =0.0035ns
 //decide whether to write calibrated in clock cycles (as is now) or ns
 //Decide on how to read in tdc parameters, 64 kbits .dat, do .txt for now
-//Check maximum for calibrated time in practice
 
 //Start looking at vhdl
 
-//If data goes below the first rollover with coarse=0, consider it to be coarse 0 and calibrated=0
+//1/320=0.003125ms but
+//1/394 is the coarse lsb EIC, make it a const variable
+//Fine lsb= coarselsb/0x1FF (0x1FF=512. as const double)
