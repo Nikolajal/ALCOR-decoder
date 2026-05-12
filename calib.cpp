@@ -5,6 +5,9 @@
 #include <string>
 #include <cmath>
 
+double cmin=0;
+double cmax=0;
+
 int rollover_counter = 0;//-1; // we start from -1 because the very first word is a rollover
 int n_tdc =4;
 //#define UINT32_MAX  (0xffffffff)
@@ -92,6 +95,7 @@ void dump(std::ofstream &fout, uint32_t* word){
 //calibrating the coarse and fine times
 //this was written by the Professor
 uint32_t corine(double coarse, double* phase){
+  std::cout<<coarse<<std::endl;
   if (*phase < 0.) {
     if (coarse!=0) {
       coarse--;
@@ -107,14 +111,14 @@ uint32_t corine(double coarse, double* phase){
       *phase = 1.;
     }
   }
-  return (uint32_t)coarse;
+  return (uint32_t)coarse<<9;
 }
 
 //dce-decode, calibrate, encode
 void dce(std::ofstream &fout, char *buffer, int size, double *par, int tdc)
 {
-  double a = 1./static_cast<double>(0x1FF);   /// with a = 1/FINEWIDTH and b = 0.5 we don't need calibration....
-  double b = 0.5;
+  double a = 0.0015; //same as below
+  double b = -0.5;//change to par after testing
   int n = size/4;
   auto word = (uint32_t *)buffer;
   //Maybe try to replace pos with a condition for NULL
@@ -163,13 +167,23 @@ void dce(std::ofstream &fout, char *buffer, int size, double *par, int tdc)
       }
       /** hit **/
       //equation from compact.cc
-      double c_hit =  b + ((*word)&0x1FF) * a - 0.5;
-      *word=(*word&clear_time)|corine(*word&coarse_mask,&c_hit)|(uint32_t)c_hit;
+      double c_hit =  b + ((*word)&0x1FF) * a;
+            alcor_hit_t *hit1 = (alcor_hit_t *)word;
+      //hit1->print();
+      //std::cout<<corine((*word>>9)&coarse_mask,&c_hit)<<std::endl;
+      //std::cout<<std::string(20,'/')<<std::endl;
+            //break;
+      cmin=cmin>c_hit?c_hit:cmin;
+      cmax=cmax<c_hit?c_hit:cmax;
+      *word=(*word&clear_time)|corine((*word>>9)&coarse_mask,&c_hit)|(uint32_t)c_hit;
+      alcor_hit_t *hit2 = (alcor_hit_t *)word;
+      //hit2->print();
+      //std::cout<<std::hex<<*word<<std::endl;
             dump(fout,word);
       ++word; ++pos;
     }
      
-
+//break;
   }
 }
 
@@ -207,6 +221,7 @@ const std::string outfilename="calibtest.dat";
     fin.read(buffer, buffer_header.size);
     if (buffer_header.id < 24) {
       dce(fout, buffer, buffer_header.size, par, tdc);
+      //break;
     }
     else if (buffer_header.id == 24) {
       //To the file it goes it seems, maybe make this more efficient by not needing to read in triggers, only id
@@ -217,8 +232,8 @@ const std::string outfilename="calibtest.dat";
   /** close input file **/
   fin.close();
   fout.close();
-std::cout<<max_calib<<std::endl;
-  std::cout<<min_calib<<std::endl;
+std::cout<<cmax<<std::endl;
+  std::cout<<cmin<<std::endl;
  std::cout<<"End"<<std::endl;
 }
 //There may not be a need in a rollover counter or spill flag
@@ -238,3 +253,10 @@ std::cout<<max_calib<<std::endl;
 //1/320=0.003125ms but
 //1/394 is the coarse lsb EIC, make it a const variable
 //Fine lsb= coarselsb/0x1FF (0x1FF=512. as const double)
+
+
+//a= 0.0015
+//b=-0.5
+//use the old formula for this (ax+b)
+//make a program to decode raw data and calibrate on the fly, then compare the two decoded
+//edit compact.cc to test if what goes in comes out the same
