@@ -3,7 +3,7 @@
 #include <iostream>
 #include <fstream>
 #include <string>
-#include <cmath>
+
 
 double cmin=0;
 double cmax=0;
@@ -95,7 +95,7 @@ void dump(std::ofstream &fout, uint32_t* word){
 //calibrating the coarse and fine times
 //this was written by the Professor
 uint32_t corine(double coarse, double* phase){
-  std::cout<<coarse<<std::endl;
+  std::cout<<*phase<<std::endl;
   if (*phase < 0.) {
     if (coarse!=0) {
       coarse--;
@@ -111,6 +111,7 @@ uint32_t corine(double coarse, double* phase){
       *phase = 1.;
     }
   }
+  *phase=std::llround(*phase * 511.0);
   return (uint32_t)coarse<<9;
 }
 
@@ -169,16 +170,18 @@ void dce(std::ofstream &fout, char *buffer, int size, double *par, int tdc)
       //equation from compact.cc
       double c_hit =  b + ((*word)&0x1FF) * a;
             alcor_hit_t *hit1 = (alcor_hit_t *)word;
-      //hit1->print();
-      //std::cout<<corine((*word>>9)&coarse_mask,&c_hit)<<std::endl;
-      //std::cout<<std::string(20,'/')<<std::endl;
+            std::cout<<"Reading in: ";
+      hit1->print();
             //break;
-      cmin=cmin>c_hit?c_hit:cmin;
-      cmax=cmax<c_hit?c_hit:cmax;
+      std::cout<<c_hit<<std::endl;
       *word=(*word&clear_time)|corine((*word>>9)&coarse_mask,&c_hit)|(uint32_t)c_hit;
+            cmin=cmin>c_hit?c_hit:cmin;
+      cmax=cmax<c_hit?c_hit:cmax;
       alcor_hit_t *hit2 = (alcor_hit_t *)word;
-      //hit2->print();
-      //std::cout<<std::hex<<*word<<std::endl;
+      std::cout<<"Calibrated: ";
+      hit2->print();
+      std::cout<<std::hex<<*word<<std::endl;
+      std::cout<<std::string(80,'/')<<std::endl;
             dump(fout,word);
       ++word; ++pos;
     }

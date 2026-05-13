@@ -13,6 +13,7 @@ int integrated_spill = 0;
 int integrated_hits = 0;
 int rollover_counter = 0;//-1; // we start from -1 because the very first word is a rollover
 int frame = 0;
+int misses = 0;
 
 TGraph *gRollover = nullptr;
 
@@ -111,12 +112,13 @@ void write_alcor_data(TTree *tout, int device, int fifo, int column, int pixel, 
   write_data(tout, device, fifo, 1, -1, column, pixel, tdc, rollover, coarse, fine);
 }
                 
-void decode_trigger(char *buffer, int device, int fifo, int size, TTree *tout)
+void decode_trigger(char *buffer, char *buffer_c, int device, int fifo, int size, TTree *tout)
 {
   //if (verbose) printf(" --- decode_trigger: device-%d fifo-%d, size=%d \n", device, fifo, size); 
 
   size /= 4;
   auto word = (uint32_t *)buffer;
+  auto word_c = (uint32_t *)buffer_c;
   uint32_t pos = 0;
 
   while (pos < size) {
@@ -128,13 +130,15 @@ void decode_trigger(char *buffer, int device, int fifo, int size, TTree *tout)
       uint64_t trigger_time = 0x0;
       //if (verbose) printf(" 0x%08x -- spill header (counter=%d)\n", *word, counter);
       trigger_time = (uint64_t)(*word & 0xff) << 32;
-      ++word; ++pos;
+              if(*word_c!=*word)misses++;
+      ++word; ++pos;++word_c;
       //if (verbose) printf(" 0x%08x -- spill header continued \n", *word);
       trigger_time |= *word;
       uint32_t coarse = trigger_time & 0x7fff;
       uint32_t rollover = trigger_time >> 15;
       write_trigger_data(tout, device, fifo, 7, counter, rollover, coarse);
-      ++word; ++pos;
+      if(*word_c!=*word)misses++;
+      ++word; ++pos;++word_c;
     }
     
     /** spill trailer **/
@@ -144,13 +148,15 @@ void decode_trigger(char *buffer, int device, int fifo, int size, TTree *tout)
       uint64_t trigger_time = 0x0;
      // if (verbose) printf(" 0x%08x -- spill trailer (counter=%d)\n", *word, counter);
       trigger_time = (uint64_t)(*word & 0xff) << 32;
-      ++word; ++pos;
+      if(*word_c!=*word)misses++;
+      ++word; ++pos;++word_c;
       //if (verbose) printf(" 0x%08x -- spill trailer continued \n", *word);
       trigger_time |= *word;
       uint32_t coarse = trigger_time & 0x7fff;
       uint32_t rollover = trigger_time >> 15;
       write_trigger_data(tout, device, fifo, 15, counter, rollover, coarse);
-      ++word; ++pos;
+      if(*word_c!=*word)misses++;
+      ++word; ++pos; ++word_c;
     }
     
     /** trigger **/
@@ -160,19 +166,22 @@ void decode_trigger(char *buffer, int device, int fifo, int size, TTree *tout)
      // if (verbose) printf(" 0x%08x -- trigger header\n", *word);
       trigger_time = (uint64_t)(*word & 0xff) << 32;
       uint32_t counter = (*word & 0xffff00) >> 16;
-      ++word; ++pos;
+        if(*word_c!=*word)misses++;
+      ++word; ++pos;++word_c;
       //if (verbose) printf(" 0x%08x -- trigger header continued \n", *word);
       trigger_time |= *word;
       uint32_t coarse = trigger_time & 0x7fff;
       uint32_t rollover = trigger_time >> 15;
       write_trigger_data(tout, device, fifo, 9, counter, rollover, coarse);
-      ++word; ++pos;
+      if(*word_c!=*word)misses++;
+      ++word; ++pos; ++word_c;
     }
 
     /** else **/
     else {
-      //printf(" 0x%08x -- unexpected word \n", *word);
-      ++word; ++pos;
+      printf(" 0x%08x -- unexpected word \n", *word);
+      if(*word_c!=*word)misses++;
+      ++word; ++pos; ++word_c;
     }
     
   }
@@ -180,10 +189,11 @@ void decode_trigger(char *buffer, int device, int fifo, int size, TTree *tout)
 }
 
 //decode(buffer, main_header.device, buffer_header.id, buffer_header.size, tout, is_filtered);
-void decode(char *buffer, int device, int fifo, int size, TTree *tout, bool is_filtered)
+void decode(char *buffer, char *buffer_c, int device, int fifo, int size, TTree *tout, bool is_filtered)
 {
   size /= 4;
   auto word = (uint32_t *)buffer;
+  auto word_c = (uint32_t *)buffer_c;
   alcor_hit_t *hit;
   uint32_t pos = 0;
 
@@ -195,17 +205,19 @@ void decode(char *buffer, int device, int fifo, int size, TTree *tout, bool is_f
       
       /** spill header **/
       if ((*word & 0xf0000000) == 0x70000000) {
+        if(*word_c!=*word)misses++;
         uint32_t counter = (*word & 0x0fff0000) >> 16;
         uint64_t trigger_time = 0x0;
        // if (verbose) printf(" 0x%08x -- spill header (counter=%d)\n", *word, counter);
         trigger_time = (uint64_t)(*word & 0xff) << 32;
-        ++word; ++pos;
+        ++word; ++pos;++word_c;
         //if (verbose) printf(" 0x%08x -- spill header continued \n", *word);
         trigger_time |= *word;
         uint32_t coarse = trigger_time & 0x7fff;
         uint32_t rollover = trigger_time >> 15;
         write_trigger_data(tout, device, fifo, 7, counter, rollover, coarse);
-        ++word; ++pos;
+        if(*word_c!=*word)misses++;
+        ++word; ++pos;++word_c;
         in_spill = true;
 
 	break;
@@ -218,7 +230,8 @@ void decode(char *buffer, int device, int fifo, int size, TTree *tout, bool is_f
 	//	else 
 	 // printf(" 0x%08x -- \n", *word);
       }
-      ++word; ++pos;
+      if(*word_c!=*word)misses++;
+      ++word; ++pos;++word_c;
     }
     
     // find spill trailer
@@ -228,7 +241,8 @@ void decode(char *buffer, int device, int fifo, int size, TTree *tout, bool is_f
       if (*word == 0x666caffe) {
         //if (verbose) printf(" 0x%08x -- killed fifo \n", *word);
         write_trigger_data(tout, device, fifo, 15, -1, -1, -1);
-        ++word; ++pos;
+        if(*word_c!=*word)misses++;
+        ++word; ++pos; ++word_c;
         in_spill = false;
 	rollover_counter = 0;
         break;	
@@ -241,13 +255,15 @@ void decode(char *buffer, int device, int fifo, int size, TTree *tout, bool is_f
         uint64_t trigger_time = 0x0;
         //if (verbose) printf(" 0x%08x -- spill trailer (counter=%d)\n", *word, counter);
         trigger_time = (uint64_t)(*word & 0xff) << 32;
-        ++word; ++pos;
+        if(*word_c!=*word)misses++;
+        ++word; ++pos; ++word_c;
         //if (verbose) printf(" 0x%08x -- spill trailer continued \n", *word);
         trigger_time |= *word;
         uint32_t coarse = trigger_time & 0x7fff;
         uint32_t rollover = trigger_time >> 15;
         write_trigger_data(tout, device, fifo, 15, counter, rollover, coarse);
-        ++word; ++pos;
+        if(*word_c!=*word)misses++;
+        ++word; ++pos;++word_c;
         in_spill = false;
 	gRollover->AddPoint(integrated_spill, rollover_counter);
 	integrated_spill++;
@@ -260,7 +276,8 @@ void decode(char *buffer, int device, int fifo, int size, TTree *tout, bool is_f
         //if (verbose) printf(" 0x%08x -- rollover (counter=%d) \n", *word, rollover_counter);
         ++rollover_counter;
 	++integrated_rollover;
-        ++word; ++pos;
+        if(*word_c!=*word)misses++;
+        ++word; ++pos; ++word_c;
         continue;
       }
 //std::cout<<"here"<<std::endl;
@@ -284,13 +301,18 @@ void decode(char *buffer, int device, int fifo, int size, TTree *tout, bool is_f
       c_hit = 1.;
     }
   }
+  c_hit=std::llround(c_hit * 511.0);
 hit->fine=c_hit;
             //if(hit->coarse!=0|hit->calib!=0|hit->tdc!=0|hit->pixel!=0|hit->column!=0)
      // hit->print();
       //if (verbose) printf(" 0x%08x -- hit (coarse=%d, fine=%d, column=%d, pixel=%d --> channel=%d)\n", *word, hit->coarse, hit->fine, hit->column, hit->pixel, hit->column * 4 + hit->pixel);
       write_alcor_data(tout, device, fifo, hit->column, hit->pixel, hit->tdc, rollover_counter, hit->coarse, hit->fine);
       integrated_hits++;
-      ++word; ++pos;
+      if(*word_c!=*word){
+        //std::cout<<"here"<<std::endl;
+       misses++;
+      }
+      ++word; ++pos; ++word_c;
       
     }
   }
@@ -333,7 +355,9 @@ void cdecoder(/*int argc, char *argv[]*/)
   /** open input file **/
   //std::cout << " --- opening input file: " << input_filename << std::endl;
   std::ifstream fin;
+  std::ifstream cin;
   fin.open("alcdaq.fifo_3.dat", std::ofstream::in | std::ofstream::binary);
+  cin.open("calibtest.dat", std::ofstream::in | std::ofstream::binary);
   output_filename="rawcalib.root";
   /** read main header **/ 
   main_header_t main_header;
@@ -366,11 +390,12 @@ void cdecoder(/*int argc, char *argv[]*/)
     printf(" --- [ERROR] filter mode not supported: 0x%01x \n", main_header.filter_mode);
     //return 1;
   }
-  
+  main_header_t main_header_c;
+  cin.read((char *)&main_header_c, sizeof(main_header_t));
   // create reading buffer
   auto staging_size = main_header.staging_size;
   char *buffer = new char[staging_size];
-  
+  char *buffer_c = new char[main_header_c.staging_size];
   /** open output file **/
   //std::cout << " --- opening output file: " << output_filename << std::endl;
   auto fout = TFile::Open(output_filename.c_str(), "RECREATE");
@@ -392,21 +417,24 @@ void cdecoder(/*int argc, char *argv[]*/)
   
   /** loop over data **/
   buffer_header_t buffer_header;
+  buffer_header_t buffer_header_c;
   uint32_t word;
   while (true) {
     fin.read((char *)(&buffer_header), sizeof(buffer_header_t));
+    cin.read((char *)(&buffer_header_c), sizeof(buffer_header_t));
     if (fin.eof()) break;
     if (buffer_header.caffe != 0x123caffe) {
       printf(" --- [ERROR] caffe header mismatch in buffer header: %08x \n", buffer_header.caffe);
       break;
     }
     fin.read(buffer, buffer_header.size);
-    std::cout<<buffer_header.size<<std::endl;
+    cin.read(buffer_c, buffer_header_c.size);
+   // std::cout<<buffer_header.size<<std::endl;
     if (buffer_header.id < 24) {
-      decode(buffer, main_header.device, buffer_header.id, buffer_header.size, tout, is_filtered);
+      decode(buffer, buffer_c, main_header.device, buffer_header.id, buffer_header.size, tout, is_filtered);
     }
     else if (buffer_header.id == 24) {
-      decode_trigger(buffer, main_header.device, buffer_header.id, buffer_header.size, tout);
+      decode_trigger(buffer, buffer_c, main_header.device, buffer_header.id, buffer_header.size, tout);
     }
   }
   
@@ -425,6 +453,7 @@ void cdecoder(/*int argc, char *argv[]*/)
   
   /** close input file **/
   fin.close();
+  std::cout<<misses<<std::endl;
   //std::cout << " --- all done, so long " << std::endl;
 
   //return 0;
