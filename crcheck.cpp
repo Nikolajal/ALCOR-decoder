@@ -1,7 +1,6 @@
 #include <iostream>
 #include <fstream>
 #include <string>
-//#include <boost/program_options.hpp>
 #include "TFile.h"
 #include "TTree.h"
 
@@ -39,11 +38,10 @@ void crcheck(const std::string infilename1, const std::string infilename2)
   rin->SetBranchAddress("coarse", &hit2.coarse);
   rin->SetBranchAddress("fine", &hit2.fine);
       for (int iev = 0; iev < nev; ++iev) {
-       // std::cout<<iev<<std::endl;
         fin->GetEntry(iev);
         rin->GetEntry(iev);
-        if(hit1.fifo!=hit2.fifo|hit1.type!=hit2.type|hit1.counter!=hit2.counter|hit1.column!=hit2.column|hit1.pixel!=hit2.pixel|hit1.tdc!=hit2.tdc|
-        hit1.rollover!=hit2.rollover|hit1.coarse!=hit2.coarse|hit1.fine!=hit2.fine)
+        if(hit1.fifo!=hit2.fifo||hit1.type!=hit2.type||hit1.counter!=hit2.counter||hit1.column!=hit2.column||hit1.pixel!=hit2.pixel||hit1.tdc!=hit2.tdc||
+        hit1.rollover!=hit2.rollover||hit1.coarse!=hit2.coarse||hit1.fine!=hit2.fine)
         std::cout<<"hit"<<std::endl;
       }
   in1->Close();

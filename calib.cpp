@@ -3,124 +3,54 @@
 #include <iostream>
 #include <fstream>
 #include <string>
+#include "data_structs.h"
 
-
-double cmin=0;
-double cmax=0;
-
-int rollover_counter = 0;//-1; // we start from -1 because the very first word is a rollover
-int n_tdc =4;
-//#define UINT32_MAX  (0xffffffff)
-uint32_t clear_time=UINT32_MAX-0xFFFFFF;//FFF0000
-uint32_t fine_mask=0x1FF;//FFF0000
-constexpr uint32_t coarse_mask=0x7FFF;
-constexpr double EICCLK = 394.0;  // MHz
-constexpr double coarse_clock=3.125;
-constexpr double fine_binning=coarse_clock/511.;
-constexpr double FWF = static_cast<double>(0x1FF);
-constexpr double COARSE_LSB_PS = 1.E+6/EICCLK;
-constexpr double FINE_LSB_PS = COARSE_LSB_PS/static_cast<double>(0x1FF);
-
+int n_tdc = 4;
+uint32_t clear_time = UINT32_MAX-0xFFFFFF;//FFF0000
+constexpr uint32_t coarse_mask = 0x7FFF;
 constexpr double rollover = 0x5c5c5c5c;
 
-struct main_header_t {
-  uint32_t caffe;
-  uint32_t readout_version;
-  uint32_t firmware_release;
-  uint32_t run_number;
-  uint32_t timestamp;
-  uint32_t staging_size;
-  uint32_t run_mode;
-  uint32_t filter_mode;
-  uint32_t device;
-  uint32_t reserved1;
-  uint32_t reserved2;
-  uint32_t reserved3;
-  uint32_t reserved4;
-  uint32_t reserved5;
-  uint32_t reserved6;
-  uint32_t reserved7;
-};
-
-struct buffer_header_t {
-  uint32_t caffe;
-  uint32_t id;
-  uint32_t counter;
-  uint32_t size;
-};
-
-struct spill_t {
-  uint32_t coarse   : 15;
-  uint32_t rollover : 25;
-  uint32_t zero     : 8;
-  uint32_t counter  : 12;
-  uint32_t id       : 4;
-};
-
-struct trigger_t {
-  uint32_t coarse   : 15;
-  uint32_t rollover : 25;
-  uint32_t counter  : 16;
-  uint32_t type     : 4;
-  uint32_t id       : 4;
-};
-
-struct alcor_hit_t {
-  //depends on tdc, ~every 25 or 40ps
-  uint32_t fine   : 9;
-  //clock cycle, 3.125ns
-  uint32_t coarse : 15;
-  uint32_t tdc    : 2;
-  uint32_t pixel  : 3;
-  uint32_t column : 3;
-  void print() {
-    printf(" hit: %d %d %d %d %d \n", column, pixel, tdc, coarse, fine);
-  }
-};
-
-bool in_spill = false;
-uint32_t max_calib=0;
-uint32_t min_calib=0;
 //Function for writing a word to file as 4 chars
-//Presumably requires this split to accomodate char casting
-void dump(std::ofstream &fout, uint32_t* word){
+void dump(std::ofstream &fout, const uint32_t* word){
   //Probably change to a nicer loop
-  //Add a separate variable for word in the write function to simplify code in dce
+  //copying the writing variable just in case
+      std::uint32_t word_copy = *word;
       for(int i=0;i<4;i++){
-        const std::uint8_t writing=*word&0xFF;
+        const std::uint8_t writing = word_copy&0xFF;
       fout.write(reinterpret_cast<const char *>(&writing),sizeof(writing));
-      *word>>=8;
+      word_copy >>= 8;
     }
 }
 //calibrating the coarse and fine times
 //this was written by the Professor
-uint32_t corine(double coarse, double* phase){
-  std::cout<<*phase<<std::endl;
-  if (*phase < 0.) {
-    if (coarse!=0) {
+uint32_t corine(uint32_t coarse, double* phase){
+  //std::cout<<*phase<<std::endl;
+  if (*phase < 0.){
+    if (coarse != 0){
       coarse--;
       *phase += 1.;
-    } else {
+    }
+    else{
       *phase = 0.;
     }
-  } else if (*phase > 1.) {
-    if (coarse != 0x7FFF) {  // this is to avoid a roll-over/move to orbit+1 due to fine calibration
+  } else if (*phase > 1.){
+    if (coarse != 0x7FFF){  // this is to avoid a roll-over/move to orbit+1 due to fine calibration
       coarse++;
       *phase -= 1.;
-    } else {
+    }
+    else{
       *phase = 1.;
     }
   }
   *phase=std::llround(*phase * 511.0);
-  return (uint32_t)coarse<<9;
+  return coarse << 9;
 }
 
 //dce-decode, calibrate, encode
-void dce(std::ofstream &fout, char *buffer, int size, double *par, int tdc)
-{
-  double a = 0.0015; //same as below
-  double b = -0.5;//change to par after testing
-  int n = size/4;
+void dce(std::ofstream &fout, char *buffer, int size, double *par){
+  int rollover_counter = 0;//-1; // we start from -1 because the very first word is a rollover
+  bool in_spill = false;
+  int n = size / 4;
   auto word = (uint32_t *)buffer;
   //Maybe try to replace pos with a condition for NULL
   uint32_t pos = 0;
@@ -128,14 +58,14 @@ void dce(std::ofstream &fout, char *buffer, int size, double *par, int tdc)
   while (pos < n) {
     while (!in_spill && pos < n) {
       if ((*word & 0xf0000000) == 0x70000000){
-        dump(fout,word);
+        dump(fout, word);
         ++word; ++pos;
-        dump(fout,word);
+        dump(fout, word);
         in_spill = true;
         ++word; ++pos;
         break;
       }
-      dump(fout,word);
+      dump(fout, word);
       ++word; ++pos;
       }
     // find spill trailer
@@ -143,7 +73,7 @@ void dce(std::ofstream &fout, char *buffer, int size, double *par, int tdc)
                            
       /** killed fifo **/
       if (*word == 0x666caffe) {
-                dump(fout,word);
+                dump(fout, word);
         ++word; ++pos;
         in_spill = false;
 	rollover_counter = 0;
@@ -152,9 +82,9 @@ void dce(std::ofstream &fout, char *buffer, int size, double *par, int tdc)
 
       /** spill trailer **/
       if ((*word & 0xf0000000) == 0xf0000000) {
-                dump(fout,word);
+                dump(fout, word);
         ++word; ++pos;
-        dump(fout,word);
+        dump(fout, word);
         ++word; ++pos;
         in_spill = false;
 	break;
@@ -162,27 +92,37 @@ void dce(std::ofstream &fout, char *buffer, int size, double *par, int tdc)
       /** rollover **/
       if (*word == rollover) {
         //std::cout<<"here"<<std::endl;
-                dump(fout,word);
+                dump(fout, word);
         ++word; ++pos;
         continue;
       }
       /** hit **/
-      //equation from compact.cc
-      double c_hit =  b + ((*word)&0x1FF) * a;
+      int tdc = (*word >> 24) & 0b11;
+        double c_hit =  par[tdc+4] + ((*word) & 0x1FF) * par[tdc];
+
             alcor_hit_t *hit1 = (alcor_hit_t *)word;
             std::cout<<"Reading in: ";
-      hit1->print();
-            //break;
-      std::cout<<c_hit<<std::endl;
-      *word=(*word&clear_time)|corine((*word>>9)&coarse_mask,&c_hit)|(uint32_t)c_hit;
-            cmin=cmin>c_hit?c_hit:cmin;
-      cmax=cmax<c_hit?c_hit:cmax;
-      alcor_hit_t *hit2 = (alcor_hit_t *)word;
-      std::cout<<"Calibrated: ";
-      hit2->print();
+      //hit1->print();
+      //std::cout<<c_hit<<std::endl;
+      //decomposed to 3 lines to avoid possible compiler issues
+      uint32_t time_part = corine((*word >> 9)&coarse_mask,&c_hit) | (uint32_t)c_hit;
+      *word=(*word & clear_time) | time_part;
       std::cout<<std::hex<<*word<<std::endl;
-      std::cout<<std::string(80,'/')<<std::endl;
-            dump(fout,word);
+      //uint32_t corsica=corine((*word>>9)&coarse_mask,&c_hit);
+      //auto word1=(*word&clear_time)|corsica;
+      //*word=(*word&clear_time);
+      //std::cout<<std::hex<<*word<<std::endl;
+      //std::cout<<std::hex<<word1<<std::endl;
+      //*word=*word|corine((*word>>9)&coarse_mask,&c_hit);
+      //std::cout<<std::hex<<*word<<std::endl;
+      //*word=*word|(uint32_t)c_hit;
+      //break;
+      alcor_hit_t *hit2 = (alcor_hit_t *)word;
+      //std::cout<<"Calibrated: ";
+     // hit2->print();
+     // std::cout<<std::hex<<*word<<std::endl;
+      //std::cout<<std::string(80,'/')<<std::endl;
+            dump(fout, word);
       ++word; ++pos;
     }
      
@@ -196,16 +136,13 @@ const std::string infilename="alcdaq.fifo_3.dat";
 const std::string outfilename="calibtest.dat";
   //Reading in the parameters. Temp until the file type is finalized. Maybe make par global
   double par[8];
-  //below temporary, not yet sure how to pass tdc number or if I will even need it
-  int tdc=infilename[12];
   std::ifstream fin;
   fin.open(infilename, std::ofstream::in | std::ofstream::binary);
   //Reading in the TDC parameters; temporary in all likelihood
   std::ifstream pin("parameters.txt", std::ofstream::in);
   int i=0;
-  while(!pin.eof()) pin>>par[i++];
+  while(!pin.eof() || i<8) pin>>par[i++];
   pin.close();
-
   // copy this straight to file
   main_header_t main_header;
   fin.read((char *)&main_header, sizeof(main_header_t));
@@ -214,16 +151,16 @@ const std::string outfilename="calibtest.dat";
 
   /** open output file **/
   std::ofstream fout(outfilename, std::ofstream::out | std::ofstream::binary);
-  fout.write(reinterpret_cast<char*>(&main_header),sizeof(main_header_t));
+  fout.write(reinterpret_cast<char*>(&main_header), sizeof(main_header_t));
   /** loop over data **/
   buffer_header_t buffer_header;
   while (true) {
     fin.read((char *)(&buffer_header), sizeof(buffer_header_t));
     if (fin.eof()) break;
-    fout.write(reinterpret_cast<char*>(&buffer_header),sizeof(buffer_header_t));
+    fout.write(reinterpret_cast<char*>(&buffer_header), sizeof(buffer_header_t));
     fin.read(buffer, buffer_header.size);
     if (buffer_header.id < 24) {
-      dce(fout, buffer, buffer_header.size, par, tdc);
+      dce(fout, buffer, buffer_header.size, par);
       //break;
     }
     else if (buffer_header.id == 24) {
@@ -235,20 +172,11 @@ const std::string outfilename="calibtest.dat";
   /** close input file **/
   fin.close();
   fout.close();
-std::cout<<cmax<<std::endl;
-  std::cout<<cmin<<std::endl;
  std::cout<<"End"<<std::endl;
 }
 //There may not be a need in a rollover counter or spill flag
 
-//New tasks:
-//modify decoder to accept calibrated time
-
-//warning: signed int will not auto cast to char correctly, do not use
-//check for the ranges of the calibrated times, has to be 127 to -255
-
 //Each bit is 32768(rollover cycles)/23^2 =0.0035ns
-//decide whether to write calibrated in clock cycles (as is now) or ns
 //Decide on how to read in tdc parameters, 64 kbits .dat, do .txt for now
 
 //Start looking at vhdl
@@ -257,9 +185,8 @@ std::cout<<cmax<<std::endl;
 //1/394 is the coarse lsb EIC, make it a const variable
 //Fine lsb= coarselsb/0x1FF (0x1FF=512. as const double)
 
-
-//a= 0.0015
-//b=-0.5
-//use the old formula for this (ax+b)
-//make a program to decode raw data and calibrate on the fly, then compare the two decoded
 //edit compact.cc to test if what goes in comes out the same
+
+//make a copy of word in dump
+//check if coarse in corine needs to be double, could be errors
+
