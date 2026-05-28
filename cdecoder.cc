@@ -375,7 +375,7 @@ std::cout<<buffer_header_c.size<<" "<<buffer_header.size<<std::endl;
     fin.read(buffer, buffer_header.size);
     if (rin.eof()){
       std::cout<<"Calibrated raw data prematurely reached end of file. Stopping"<<std::endl;
-      break;
+      return;
     }
     rin.read(buffer_c, buffer_header_c.size);
    // std::cout<<buffer_header.size<<std::endl;

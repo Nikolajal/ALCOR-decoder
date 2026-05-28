@@ -16,6 +16,11 @@ void crcheck(const std::string infilename1, const std::string infilename2)
   TTree *rin = (TTree*)in2->Get("alcor");
 
   auto nev = fin->GetEntries();
+  auto rnev = rin->GetEntries();
+  if(nev != rnev){
+    std::cout<<"Number of ROOT entries are mismatched. Stopping"<<std::endl;
+    return;
+    }
   hit_t hit1;
   fin->SetBranchAddress("fifo", &hit1.fifo);
   fin->SetBranchAddress("type", &hit1.type);
