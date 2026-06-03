@@ -6,3 +6,9 @@ Files pretaining to decoding and calibrating ALCOR ASIC data, part of dRICH comp
 -ctest.cpp: auxillary test file  
 -crcheck.cpp: checks that two root files produced by the decoder.cc and or cdecoder.cc are identical  
 -cdecoder.cc: transforms binary data into a root file, while calibrating the time component and checking it agains the raw calibrated data as provided by calib.cpp  
+-data_structs51.h: header file containing all the structs from decoder.cc with some more structs and functions
+
+Latest 32-bit procedure to check calibrated output
+1. With alcdaq.fifo_3.dat in directory, compile calib.cpp with clang and run  
+2. Using ROOT, load and run cdecoder.cc  
+3. Once more using ROOT, load and run crcheck.cpp
