@@ -26,6 +26,9 @@ struct buffer_header_t {
     uint32_t id;
     uint32_t counter;
     uint32_t size;
+        void print() {
+        printf(" hit: %d %d %d %d \n", caffe, id, counter, size);
+    }
 };
 
 struct spill_t {
@@ -59,18 +62,18 @@ struct alcor_hit_t {
 };
 
 struct alcor_hit_51_t {
-    uint32_t fine_lead : 9;
-    uint32_t coarse_lead : 13;
-    uint32_t tdc_lead : 2;
-    uint32_t pixel  : 3;
-    uint32_t column : 3;
-    uint32_t fine_trail : 9;
-    uint32_t coarse_trail : 7;
-    uint32_t tdc_trail : 2;
-    uint32_t FEB_ID : 2;
-    uint32_t K_code : 1;
+    uint64_t fine_lead : 9;
+    uint64_t coarse_lead : 13;
+    uint64_t tdc_lead : 2;
+    uint64_t pixel  : 3;
+    uint64_t column : 3;
+    uint64_t fine_trail : 9;
+    uint64_t coarse_trail : 7;
+    uint64_t tdc_trail : 2;
+    uint64_t FEB_ID : 2;
+    uint64_t K_code : 2;
     void print() {
-        printf(" hit: %d %d %d %d %d %d %d %d\n", column, pixel, tdc_lead , tdc_trail , coarse_lead, coarse_trail, fine_lead, fine_trail);
+        printf(" hit: %d %d %d %d %d %d %d %d %d %d \n", K_code, FEB_ID, tdc_trail, coarse_trail, fine_trail, column, pixel, tdc_lead ,  coarse_lead,  fine_lead);
     }
     bool operator==(alcor_hit_51_t t) {
         return fine_lead == t.fine_lead && fine_trail == t.fine_trail && coarse_lead == t.coarse_lead
@@ -82,14 +85,20 @@ struct alcor_hit_51_t {
 struct data_t {
     int device;
     int fifo;
+    int K_code;
     int type;
+    int FEB_ID;
     int counter;
     int column;
     int pixel;
-    int tdc;
+    int tdc_lead;
+    int tdc_trail;
     int rollover;
     int coarse;
-    int fine;
+    int coarse_lead;
+    int coarse_trail;
+    int fine_lead;
+    int fine_trail;
 };
 
 #endif

@@ -44,6 +44,23 @@ void write_alcor_data(TTree *tout, int device, int fifo, int K_code, int FEB_ID,
   write_data(tout, device, fifo, K_code, 1, FEB_ID, -1, column, pixel, tdc_lead, tdc_trail, rollover, -1, coarse_lead, coarse_trail, fine_lead, fine_trail, dataPrep);
 
 }
+
+//forming a 51-bit hit word and sending to write
+alcor_hit_51_t* write_hit(TTree *tout, uint32_t* word, uint64_t leadingFine, uint64_t leadingCoarse, uint64_t trailingFine, uint64_t trailingCoarse, int tdc, int device, int fifo, int rollover, data_t& dataPrep){
+        trailingCoarse = trailingCoarse > 0x7F ? 0x7F : trailingCoarse;
+        //placeholders
+        uint64_t K_CODE = 1;
+        uint64_t FEB_id = 1;
+        //Actual data overflows, so I am using hardcoded coarse values for now
+        leadingCoarse=2000;
+        trailingCoarse=119;
+        uint64_t *hitWord = new uint64_t((FIFTY_ONE_BIT_MASK&((K_CODE<<50)|(FEB_id<<48)|((uint64_t)tdc<<46)
+                          |(trailingCoarse<<39)|(trailingFine<<30)|((*word>>26)<<24)|((tdc-2)<<22)
+                          |(leadingCoarse<<9)|leadingFine)));
+        alcor_hit_51_t *hit = (alcor_hit_51_t *)hitWord;
+        write_alcor_data(tout, device, fifo, hit->K_code, hit->FEB_ID, hit->tdc_lead, hit->tdc_trail, rollover, hit->coarse_trail, hit->coarse_lead, hit->fine_trail, hit->fine_lead, hit->column, hit->pixel, dataPrep);
+        return hit;
+}
           
 uint32_t corine(uint32_t coarse, double* phase){
   //std::cout<<*phase<<std::endl;
@@ -157,9 +174,8 @@ void decode(char *buffer, char *buffer_c, int device, int fifo, int size, int si
   double leadingFine[2]={0,0};
   //queue to read in anything but hits from the 51 bit file. This relies on the 51 bit file being no longer than the 32 bit file
   std::queue<uint32_t> word_check;
-  uint64_t *hitWord;
+  uint64_t* hitWord=new uint64_t();
   alcor_hit_51_t *hit;
-  alcor_hit_51_t *hit_c;
   uint32_t pos = 0;
 
   // loop over buffer data
@@ -200,6 +216,8 @@ void decode(char *buffer, char *buffer_c, int device, int fifo, int size, int si
     
     // find spill trailer
     while (pos < size) {
+      //Assuming that the hit word is written at the position of the trailing edge, a bunch of special words will be
+      //in the way in the calibrated data
       while(*word_c == 0x666caffe || (*word_c & 0xf0000000) == 0xf0000000 || (*word_c == 0x5c5c5c5c)){
         word_check.push(*word_c);
         ++word_c;
@@ -264,6 +282,12 @@ void decode(char *buffer, char *buffer_c, int device, int fifo, int size, int si
       int tdc = (*word >> 24) & 0b11;
       double c_hit =  par[tdc+4] + ((*word) & 0x1FF) * par[tdc];
       if(tdc<2){
+        if(leadingFlag[tdc] == true){
+          std::cout<<"Leading edge timed out"<<std::endl;
+         hit =  write_hit(tout, word, leadingFine[tdc], leadingCoarse[tdc], 0xff, 0x7f, tdc+2, device, fifo, counters->at("rollover_counter"), dataPrep);
+                std::cout<<(std::string(80,'/'))<<std::endl;
+                counters->at("total_bytes") += 8;
+        }
         leadingFine[tdc] = c_hit;
         leadingCoarse[tdc] = corine((*word>>9)&coarse_mask,&leadingFine[tdc]);
         leadingFlag[tdc] = true;
@@ -271,25 +295,19 @@ void decode(char *buffer, char *buffer_c, int device, int fifo, int size, int si
             //dealing with trailing edge; only if there was a previous leading edge
       else if(tdc > 1 && leadingFlag[tdc-2] == 1){ 
         uint64_t trailingCoarse = (corine((*word>>9)&coarse_mask,&c_hit)) - leadingCoarse[tdc-2];
-        trailingCoarse = trailingCoarse > 0x7F ? 0x7F : trailingCoarse;
-        uint64_t K_CODE = 0;
-        uint64_t FEB_id = 0;
-        std::cout<<"here"<<std::endl;
-        *hitWord = (FIFTY_ONE_BIT_MASK&((K_CODE<<50)|(FEB_id<<48)|((uint64_t)tdc<<46)
-                          |(trailingCoarse<<39)|((uint64_t)c_hit<<30)|((uint64_t)(*word>>26)<<24)|((uint64_t)(tdc-2)<<22)
-                          |(leadingCoarse[tdc-2]<<9)|(uint64_t)leadingFine[tdc-2]));
-                          //std::cout<<std::hex<<((uint32_t)(*hitWord&THIRTY_TWO_BIT_MASK))<<std::endl;
-                          std::cout<<"here1"<<std::endl;
-      hit = (alcor_hit_51_t *)hitWord;
       uint64_t half1 = (uint64_t)*word_c<<32;
-      hit_c = (alcor_hit_51_t *)(half1|*(++word_c));
-      std::cout<<hit->column<<std::endl;
-      write_alcor_data(tout, device, fifo, hit->K_code, hit->FEB_ID, hit->tdc_lead, hit->tdc_trail, counters->at("rollover_counter"), hit->coarse_trail, hit->coarse_lead, hit->fine_trail, hit->fine_lead, hit->column, hit->pixel, dataPrep);
+      std::cout<<std::hex<<(FIFTY_ONE_BIT_MASK&(half1|*(++word_c)))<<"  "<<*hitWord<<std::endl;
+      uint64_t *hitWord_c = new uint64_t(((FIFTY_ONE_BIT_MASK&(half1|*(++word_c)))));
+        alcor_hit_51_t *hit_c = (alcor_hit_51_t*)hitWord_c;
+      hit = write_hit(tout, word, leadingFine[tdc-2], leadingCoarse[tdc-2], c_hit, trailingCoarse, tdc, device, fifo, counters->at("rollover_counter"), dataPrep);
       counters->at("integrated_hits")++;
+      counters->at("total_bytes") += 8;
       hit_c->print();
-      if(!(*hit_c==*hit)){
-        //hit->print();
-        //hit_c->print();
+      if(!((*hit_c)==(*hit))){
+        std::cout<<"Hit mismatch"<<std::endl;
+        hit->print();
+        hit_c->print();
+        std::cout<<(std::string(80,'/'))<<std::endl;
        counters->at("misses_c")++;
       }
       ++word_c;
@@ -302,7 +320,7 @@ void decode(char *buffer, char *buffer_c, int device, int fifo, int size, int si
       
     }
   }
-counters->at("total_bytes") += size;
+
 }
 
 void cdecoder51(/*int argc, char *argv[]*/)
