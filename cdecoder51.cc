@@ -58,6 +58,7 @@ alcor_hit_51_t* write_hit(TTree *tout, uint32_t* word, uint64_t leadingFine, uin
                           |(trailingCoarse<<39)|(trailingFine<<30)|((*word>>26)<<24)|((tdc-2)<<22)
                           |(leadingCoarse<<9)|leadingFine)));
         alcor_hit_51_t *hit = (alcor_hit_51_t *)hitWord;
+        hit->print();
         write_alcor_data(tout, device, fifo, hit->K_code, hit->FEB_ID, hit->tdc_lead, hit->tdc_trail, rollover, hit->coarse_trail, hit->coarse_lead, hit->fine_trail, hit->fine_lead, hit->column, hit->pixel, dataPrep);
         return hit;
 }
@@ -82,7 +83,7 @@ uint32_t corine(uint32_t coarse, double* phase){
     }
   }
   *phase=std::llround(*phase * 511.0);
-  return coarse << 9;
+  return (uint64_t)coarse;
 }
 
 void decode_trigger(char *buffer, char *buffer_c, int device, int fifo, int size, TTree *tout, data_t& dataPrep,  std::map<std::string,int> *counters)
@@ -160,16 +161,28 @@ void decode_trigger(char *buffer, char *buffer_c, int device, int fifo, int size
   }
 
 }
-
+/*
+void read_check(char *buffer_c,int size_c){
+    uint32_t pos = 0;
+      auto word_c = (uint32_t *)buffer_c;
+while (pos < 25){
+  std::cout<<std::hex<<*word_c<<std::endl;
+++word_c;
+++pos;
+}
+}
+*/
 //decode(buffer, main_header.device, buffer_header.id, buffer_header.size, tout, is_filtered);
 void decode(char *buffer, char *buffer_c, int device, int fifo, int size, int size_c, TTree *tout, bool is_filtered, data_t &dataPrep, TGraph* gRollover, std::map<std::string,int> *counters, double *par)
 {
   size /= 4;
+  size_c /= 4;
   //assuming that cannot be in spill going out of the buffer
   bool in_spill = false;
   auto word = (uint32_t *)buffer;
   auto word_c = (uint32_t *)buffer_c;
   bool leadingFlag[2]={0,0};
+  bool nocomFlag = false;
   uint64_t leadingCoarse[2]={0,0};
   double leadingFine[2]={0,0};
   //queue to read in anything but hits from the 51 bit file. This relies on the 51 bit file being no longer than the 32 bit file
@@ -177,6 +190,7 @@ void decode(char *buffer, char *buffer_c, int device, int fifo, int size, int si
   uint64_t* hitWord=new uint64_t();
   alcor_hit_51_t *hit;
   uint32_t pos = 0;
+  uint32_t pos_c = 0;
 
   // loop over buffer data
   while (pos < size) {
@@ -185,6 +199,7 @@ void decode(char *buffer, char *buffer_c, int device, int fifo, int size, int si
       
       /** spill header **/
       if ((*word & 0xf0000000) == 0x70000000) {
+        std::cout<<std::hex<<*word_c<<std::endl;
         if(*word_c!=*word)counters->at("misses")++;
         uint32_t counter = (*word & 0x0fff0000) >> 16;
         uint64_t trigger_time = 0x0;
@@ -196,13 +211,16 @@ void decode(char *buffer, char *buffer_c, int device, int fifo, int size, int si
         uint32_t coarse = trigger_time & 0x7fff;
         uint32_t rollover = trigger_time >> 15;
         write_trigger_data(tout, device, fifo, 7, counter, rollover, coarse, dataPrep);
-        if(*word_c!=*word)counters->at("misses")++;
-        ++word; ++pos;++word_c;
+        if(*word_c!=*word){
+          std::cout<<"Start again"<<std::endl;
+        break;
+        counters->at("misses")++;
+        }
+        ++word; ++pos;++word_c;++pos_c;
         in_spill = true;
 
 	break;
       }
-
       /** something else **/
       //if (verbose) {
 	//	if (!in_spill)
@@ -211,26 +229,34 @@ void decode(char *buffer, char *buffer_c, int device, int fifo, int size, int si
 	 // printf(" 0x%08x -- \n", *word);
      // }
       if(*word_c!=*word)counters->at("misses")++;
-      ++word; ++pos;++word_c;
+      ++word; ++pos;++word_c;++pos_c;
     }
     
     // find spill trailer
     while (pos < size) {
+      //if(pos>22)return;
+      //std::cout<<pos<<std::endl;
       //Assuming that the hit word is written at the position of the trailing edge, a bunch of special words will be
       //in the way in the calibrated data
-      while(*word_c == 0x666caffe || (*word_c & 0xf0000000) == 0xf0000000 || (*word_c == 0x5c5c5c5c)){
+      while((*word_c == 0x666caffe || (*word_c & 0xf0000000) == 0xf0000000 || (*word_c == 0x5c5c5c5c)) && pos_c!=size_c){
+              std::cout<<"Special read "<<std::hex<<*word_c<<" "<<pos_c<<std::endl;
         word_check.push(*word_c);
-        ++word_c;
+        ++word_c; ++pos_c;
       }
+            std::cout<<"Hit read "<<std::hex<<*word_c<<std::endl;
+            std::cout<<pos<<" "<<*word<<std::endl;
       /** killed fifo **/
       if (*word == 0x666caffe) {
         //if (verbose) printf(" 0x%08x -- killed fifo \n", *word);
         write_trigger_data(tout, device, fifo, 15, -1, -1, -1, dataPrep);
-        if( word_check.front()==*word){
+        if((!word_check.empty())&&word_check.front()==*word){
           word_check.pop();
         }
-        else
+        else{
+          std::cout<<"Fifo miss"<<std::endl;
+        break;
         counters->at("misses")++;
+        }
         ++word; ++pos; 
         in_spill = false;
 	counters->at("rollover_counter") = 0;
@@ -251,11 +277,15 @@ void decode(char *buffer, char *buffer_c, int device, int fifo, int size, int si
         uint32_t coarse = trigger_time & 0x7fff;
         uint32_t rollover = trigger_time >> 15;
         write_trigger_data(tout, device, fifo, 15, counter, rollover, coarse, dataPrep);
-        if( word_check.front()==*word){
+        if((!word_check.empty())&&word_check.front()==*word){
           word_check.pop();
         }
-        else
+        else{
+          std::cout<<"Trailer miss"<<std::endl;
+        //break;
+          std::cout<<"Trailer miss"<<std::endl;
         counters->at("misses")++;
+        }
         ++word; ++pos;
         in_spill = false;
 	gRollover->AddPoint(counters->at("integrated_spill"), counters->at("rollover_counter"));
@@ -266,27 +296,48 @@ void decode(char *buffer, char *buffer_c, int device, int fifo, int size, int si
 
       /** rollover **/
       if (*word == 0x5c5c5c5c) {
+        std::cout<<"at rollover"<<std::endl;
         //if (verbose) printf(" 0x%08x -- rollover (counter=%d) \n", *word, rollover_counter);
         ++counters->at("rollover_counter");
 	++counters->at("integrated_rollover");
-        if( word_check.front()==*word){
+        if((!word_check.empty())&&word_check.front()==*word){
           word_check.pop();
         }
-        else
+        else{
+          std::cout<<"Rollover miss"<<std::endl;
         counters->at("misses")++;
+        }
         ++word; ++pos; 
         continue;
       }
-//std::cout<<"here"<<std::endl;
       /** hit **/
+      std::cout<<"Hit reached"<<std::endl;
       int tdc = (*word >> 24) & 0b11;
       double c_hit =  par[tdc+4] + ((*word) & 0x1FF) * par[tdc];
+      //std::cout<<"Position: "<<pos<<std::endl;
       if(tdc<2){
         if(leadingFlag[tdc] == true){
-          std::cout<<"Leading edge timed out"<<std::endl;
+         // std::cout<<"Leading edge timed out"<<std::endl;
          hit =  write_hit(tout, word, leadingFine[tdc], leadingCoarse[tdc], 0xff, 0x7f, tdc+2, device, fifo, counters->at("rollover_counter"), dataPrep);
-                std::cout<<(std::string(80,'/'))<<std::endl;
                 counters->at("total_bytes") += 8;
+        uint64_t half1 = (uint64_t)*word_c;
+      //std::cout<<std::hex<<half1<<std::endl;
+      uint64_t *hitWord_c = new uint64_t(((FIFTY_ONE_BIT_MASK&((half1<<32)|(uint64_t)*(++word_c)))));
+      //std::cout<<std::hex<<*hitWord_c<<std::endl;
+        alcor_hit_51_t *hit_c = (alcor_hit_51_t*)hitWord_c;
+        counters->at("integrated_hits")++;
+      counters->at("total_bytes") += 8;
+                      hit->print();
+        if(!((*hit_c)==(*hit))){
+          std::cout<<"Hit mismatch,leading timeout"<<std::endl;
+        std::cout<<"Raw calibrated";
+        hit->print();
+        std::cout<<"calibtest51.dat";
+        hit_c->print();
+       counters->at("misses_c")++;
+           std::cout<<(std::string(80,'/'))<<std::endl;
+      }
+      ++word_c;
         }
         leadingFine[tdc] = c_hit;
         leadingCoarse[tdc] = corine((*word>>9)&coarse_mask,&leadingFine[tdc]);
@@ -294,23 +345,34 @@ void decode(char *buffer, char *buffer_c, int device, int fifo, int size, int si
       }
             //dealing with trailing edge; only if there was a previous leading edge
       else if(tdc > 1 && leadingFlag[tdc-2] == 1){ 
-        uint64_t trailingCoarse = (corine((*word>>9)&coarse_mask,&c_hit)) - leadingCoarse[tdc-2];
-      uint64_t half1 = (uint64_t)*word_c<<32;
-      std::cout<<std::hex<<(FIFTY_ONE_BIT_MASK&(half1|*(++word_c)))<<"  "<<*hitWord<<std::endl;
-      uint64_t *hitWord_c = new uint64_t(((FIFTY_ONE_BIT_MASK&(half1|*(++word_c)))));
-        alcor_hit_51_t *hit_c = (alcor_hit_51_t*)hitWord_c;
+                std::cout<<"Trailing edge found"<<std::endl;
+        //std::cout<<pos<<std::endl;
+        
+      uint64_t trailingCoarse = (corine((*word>>9)&coarse_mask,&c_hit)) - leadingCoarse[tdc-2];
+      uint64_t half1 = (uint64_t)*word_c;
+      //std::cout<<std::hex<<half1<<std::endl;
+      uint64_t *hitWord_c = new uint64_t(((FIFTY_ONE_BIT_MASK&((half1<<32)|(uint64_t)*(++word_c)))));
+      //std::cout<<std::hex<<*hitWord_c<<std::endl;
+      //std::cout<<std::hex<<(FIFTY_ONE_BIT_MASK&(half1|*(++word_c)))<<"  "<<*hitWord<<std::endl;
+      alcor_hit_51_t *hit_c = (alcor_hit_51_t*)hitWord_c;
       hit = write_hit(tout, word, leadingFine[tdc-2], leadingCoarse[tdc-2], c_hit, trailingCoarse, tdc, device, fifo, counters->at("rollover_counter"), dataPrep);
       counters->at("integrated_hits")++;
       counters->at("total_bytes") += 8;
-      hit_c->print();
+      //hit_c->print();
+        leadingFlag[tdc-2] = false;
       if(!((*hit_c)==(*hit))){
-        std::cout<<"Hit mismatch"<<std::endl;
+        
+        std::cout<<"Hit mismatch, trailing match"<<std::endl;
+        std::cout<<"Raw calibrated";
         hit->print();
+        std::cout<<"calibtest51.dat";
         hit_c->print();
-        std::cout<<(std::string(80,'/'))<<std::endl;
+        
        counters->at("misses_c")++;
+                     std::cout<<(std::string(80,'/'))<<std::endl;
       }
-      ++word_c;
+              //std::cout<<(std::string(80,'/'))<<std::endl;
+      ++word_c;pos_c+=2;
       }
 
             //if(hit->coarse!=0|hit->calib!=0|hit->tdc!=0|hit->pixel!=0|hit->column!=0)
@@ -360,20 +422,20 @@ void cdecoder51(/*int argc, char *argv[]*/)
     std::cout << desc << std::endl;
     return;
   }
-
+*/
   /** open input file **/
   //std::cout << " --- opening input file: " << input_filename << std::endl;
   double par[8];
   std::ifstream pin("parameters.txt", std::ofstream::in);
   int i=0;
-  while(!pin.eof() || i<8) pin>>par[i++];
+  while (i < 8 && pin >> par[i]) i++;
   pin.close();
 
   std::ifstream fin;
   std::ifstream rin;
   fin.open("alcdaq.fifo_3.dat", std::ofstream::in | std::ofstream::binary);
   rin.open("calibtest51.dat", std::ofstream::in | std::ofstream::binary);
-  output_filename="rawcalib.root";
+  output_filename="rawcalib51.root";
   /** read main header **/ 
   main_header_t main_header;
   fin.read((char *)&main_header, sizeof(main_header_t));
@@ -419,9 +481,9 @@ void cdecoder51(/*int argc, char *argv[]*/)
   data_t dataPrep;
   tout->Branch("device", &dataPrep.device, "device/I");
   tout->Branch("fifo", &dataPrep.fifo, "fifo/I");
-  tout->Branch("K_code", &dataPrep.fifo, "K_code/I");
+  tout->Branch("K_code", &dataPrep.K_code, "K_code/I");
   tout->Branch("type", &dataPrep.type, "type/I");
-  tout->Branch("FEB_ID", &dataPrep.type, "FEB_ID/I");
+  tout->Branch("FEB_ID", &dataPrep.FEB_ID, "FEB_ID/I");
   tout->Branch("counter", &dataPrep.counter, "counter/I");
   tout->Branch("column", &dataPrep.column, "column/I");
   tout->Branch("pixel", &dataPrep.pixel, "pixel/I");
@@ -446,17 +508,19 @@ void cdecoder51(/*int argc, char *argv[]*/)
     fin.read((char *)(&buffer_header), sizeof(buffer_header_t));
     rin.read((char *)(&buffer_header_c), sizeof(buffer_header_t));
 
-std::cout<<buffer_header_c.size<<" "<<buffer_header.size<<std::endl;
+std::cout<<std::dec<<buffer_header_c.size<<" "<<buffer_header.size<<std::endl;
     if (fin.eof()) break;
     if (buffer_header.caffe != 0x123caffe) {
       printf(" --- [ERROR] caffe header mismatch in buffer header: %08x \n", buffer_header.caffe);
-      break;
+
     }
     fin.read(buffer, buffer_header.size);
     rin.read(buffer_c, buffer_header_c.size);
    // std::cout<<buffer_header.size<<std::endl;
     if (buffer_header.id < 24) {
+      //read_check(buffer_c, buffer_header_c.size);
       decode(buffer, buffer_c, main_header.device, buffer_header.id, buffer_header.size, buffer_header_c.size, tout, is_filtered, dataPrep, gRollover, counters, par);
+    break;
     }
     else if (buffer_header.id == 24) {
       decode_trigger(buffer, buffer_c, main_header.device, buffer_header.id, buffer_header.size, tout, dataPrep, counters);
@@ -479,9 +543,11 @@ std::cout<<buffer_header_c.size<<" "<<buffer_header.size<<std::endl;
   /** close input file **/
   fin.close();
   rin.close();
-  std::cout<<"Hit misses: "<<counters->at("misses_c")<<std::endl;
-  std::cout<<"Other word misses: "<<counters->at("misses")<<std::endl;
-  std::cout<<"Total non-header words: "<<counters->at("total_bytes")<<std::endl;
+  std::cout<<"Hit misses: "<<std::dec<<counters->at("misses_c")<<std::endl;
+  std::cout<<"Other word misses: "<<std::dec<<counters->at("misses")<<std::endl;
+  std::cout<<"Total non-header words: "<<std::dec<<counters->at("total_bytes")<<std::endl;
+  if(counters->at("misses_c")!=0||counters->at("misses")!=0)std::cout<<"Check failed"<<std::endl;
+  else std::cout<<"Check passed"<<std::endl;
   std::cout << " --- all done, so long ---" << std::endl;
 
   //return 0;
@@ -490,3 +556,4 @@ std::cout<<buffer_header_c.size<<" "<<buffer_header.size<<std::endl;
 
 //have a more elegant way of handling if the two files are of different lengths for checking
 //make misses local and specific to each function
+//seems like an issue with the calibrated hit on cdecoder side, keeps on outputting just one value
