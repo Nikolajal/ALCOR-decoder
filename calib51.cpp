@@ -49,6 +49,21 @@ uint32_t corine(uint32_t coarse, double* phase){
   return (uint64_t)coarse;
 }
 
+//Function to write 51 bits instead of calling dump twice, attempt to not have trailer word confusion
+//seems to interfere with other 32-bit words if used
+void dump51(std::fstream &fout, const uint64_t* word){
+  //Probably change to a nicer loop
+  //copying the writing variable just in case
+      std::uint64_t word_copy = *word;
+     std::cout<<"Writing "<<std::hex<<word_copy<<std::endl;
+      for(int i=0;i<7;i++){
+        const std::uint8_t writing = word_copy&0xFF;
+      fout.write(reinterpret_cast<const char *>(&writing),sizeof(writing));
+      word_copy >>= 8;
+    }
+
+}
+
 //forming a 51-bit hit word and sending to write 
 void write_hit(std::fstream &fout, uint32_t* word, uint64_t leadingFine, uint64_t leadingCoarse, uint64_t trailingFine, uint64_t trailingCoarse, int tdc, uint32_t *count){
         trailingCoarse = trailingCoarse > 0x7F ? 0x7F : trailingCoarse;
@@ -65,11 +80,14 @@ void write_hit(std::fstream &fout, uint32_t* word, uint64_t leadingFine, uint64_
       //std::cout<<"Writing: ";
       hit1->print();
       //std::cout<<std::hex<<((*hitWord))<<std::endl;
+      //dump51(fout,hitWord);
+      
         uint32_t half1 = *hitWord&THIRTY_TWO_BIT_MASK;
         uint32_t half2 = *hitWord>>32;
-        //This means that the first 19 (32) bits of the word come first in the sequence
-        dump(fout,&half1);
+        //This means that the first 19 (32_t) bits of the word come first in the sequence
         dump(fout,&half2);
+        dump(fout,&half1);
+
         *count+=8;
 }
 
