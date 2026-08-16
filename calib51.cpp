@@ -17,7 +17,7 @@ void dump(std::fstream &fout, const uint32_t* word){
   //Probably change to a nicer loop
   //copying the writing variable just in case
       std::uint32_t word_copy = *word;
-     std::cout<<"Writing "<<std::hex<<word_copy<<std::endl;
+     //std::cout<<"Writing "<<std::hex<<word_copy<<std::endl;
       for(int i=0;i<4;i++){
         const std::uint8_t writing = word_copy&0xFF;
       fout.write(reinterpret_cast<const char *>(&writing),sizeof(writing));
@@ -55,7 +55,7 @@ void dump51(std::fstream &fout, const uint64_t* word){
   //Probably change to a nicer loop
   //copying the writing variable just in case
       std::uint64_t word_copy = *word;
-     std::cout<<"Writing "<<std::hex<<word_copy<<std::endl;
+     //std::cout<<"Writing "<<std::hex<<word_copy<<std::endl;
       for(int i=0;i<7;i++){
         const std::uint8_t writing = word_copy&0xFF;
       fout.write(reinterpret_cast<const char *>(&writing),sizeof(writing));
@@ -65,20 +65,20 @@ void dump51(std::fstream &fout, const uint64_t* word){
 }
 
 //forming a 51-bit hit word and sending to write 
-void write_hit(std::fstream &fout, uint32_t* word, uint64_t leadingFine, uint64_t leadingCoarse, uint64_t trailingFine, uint64_t trailingCoarse, int tdc, uint32_t *count){
+void write_hit(std::fstream &fout, uint32_t* word, uint64_t leadingFine, uint64_t leadingCoarse, uint64_t trailingFine, uint64_t trailingCoarse, int tdcLead, int tdcTrail, uint32_t *count){
         trailingCoarse = trailingCoarse > 0x7F ? 0x7F : trailingCoarse;
         //placeholders
-        uint64_t K_CODE = 1;
-        uint64_t FEB_id = 1;
-        //Actual data overflows, so I am using hardcoded coarse values for now
+        uint64_t K_CODE = 0;
+        uint64_t FEB_id = 0;
+        //Actual data overflows especially without subtracting trailing coarse, so I am using hardcoded coarse values for now
         leadingCoarse=2000;
         trailingCoarse=119;
-        uint64_t *hitWord = new uint64_t((FIFTY_ONE_BIT_MASK&((K_CODE<<50)|(FEB_id<<48)|((uint64_t)tdc<<46)
-                          |(trailingCoarse<<39)|(trailingFine<<30)|((*word>>26)<<24)|((tdc-2)<<22)
+        uint64_t *hitWord = new uint64_t((FIFTY_ONE_BIT_MASK&((K_CODE<<50)|(FEB_id<<48)|((uint64_t)tdcTrail<<46)
+                          |(trailingCoarse<<39)|(trailingFine<<30)|((*word>>26)<<24)|(tdcLead<<22)
                           |(leadingCoarse<<9)|leadingFine)));
         alcor_hit_51_t *hit1 = (alcor_hit_51_t *)hitWord;
       //std::cout<<"Writing: ";
-      hit1->print();
+      //hit1->print();
       //std::cout<<std::hex<<((*hitWord))<<std::endl;
       //dump51(fout,hitWord);
       
@@ -94,16 +94,14 @@ void write_hit(std::fstream &fout, uint32_t* word, uint64_t leadingFine, uint64_
 
 //dce-decode, calibrate, encode
 void dce(std::fstream &fout, char *buffer, int size, double *par, uint32_t* count){
-  uint32_t posi[2]={0,0};
-  uint32_t posf[2]={0,0};
   int rollover_counter = 0;//-1; // we start from -1 because the very first word is a rollover
   bool in_spill = false;
   int n = size / 4;
   auto word = (uint32_t *)buffer;
   //flag to signify that a leading edge has been detected
-  bool leadingFlag[2]={0,0};
-  uint64_t leadingCoarse[2]={0,0};
-  double leadingFine[2]={0,0};
+  bool leadingFlag[2][8]={0};
+  uint64_t leadingCoarse[2][8]={0};
+  double leadingFine[2][8]={0};
   uint64_t *hitWord;
   //Maybe try to replace pos with a condition for NULL
   uint32_t pos = 0;
@@ -124,9 +122,9 @@ void dce(std::fstream &fout, char *buffer, int size, double *par, uint32_t* coun
       ++word; ++pos; *count+=4;
       }
     // find spill trailer
-          std::cout<<"Starting: "<<std::hex<<pos<<std::endl;
+          //std::cout<<"Starting: "<<std::hex<<pos<<std::endl;
     while (pos < n) { 
-      std::cout<<std::hex<<pos<<" "<<*word<<std::endl;
+     // std::cout<<std::hex<<pos<<" "<<*word<<std::endl;
      // std::cout<<"Read "<<std::hex<<*word<<std::endl;
       /** killed fifo **/
       if (*word == 0x666caffe) {
@@ -155,43 +153,34 @@ void dce(std::fstream &fout, char *buffer, int size, double *par, uint32_t* coun
       }
       /** hit **/
       int tdc = (*word >> 24) & 0b11;
+      //assuming only one column
+  std::cout<<tdc<<" "<<std::endl;
+      int channel = (*word >> 26);//4*(*word >> 29) 
         double c_hit =  par[tdc+4] + ((*word) & 0x1FF) * par[tdc];
         //dealing with the leading edge
-        /*
-        if(pos==25){
-                    alcor_hit_t *hit;
-              hit = (alcor_hit_t *)word;
-                      hit->print();
-          std::cout<<"fine time "<<((*word) & 0x1ff)<<std::endl;
-          std::cout<<"fine time "<<((*word>>9) & coarse_mask)<<std::endl;
-                  std::cout<<std::hex<<*word<<std::endl;
-        }
-                  */
-          //std::cout<<"Position: "<<pos<<std::endl;
-      if(tdc<2){
-                            std::cout<<"TDC number"<<tdc<<std::endl;
-        if(leadingFlag[tdc] == true){
-          std::cout<<"Leading edge timed out"<<std::endl;
+      if(tdc==0 || tdc == 2){
+                         //   std::cout<<"TDC number"<<tdc<<std::endl;
+        if(leadingFlag[tdc/2][channel] == true){
+          //std::cout<<"Leading edge timed out"<<std::endl;
           //std::cout<<tdc<<" "<<std::endl;
-          write_hit(fout, word, leadingFine[tdc], leadingCoarse[tdc], 0xff, 0x7f, tdc+2, count);
+          write_hit(fout, word, leadingFine[tdc/2][channel], leadingCoarse[tdc/2][channel], 0xff, 0x7f, tdc, tdc, count);
           //std::cout<<"Leading position for last write: "<<posi[tdc]<<std::endl;
-                std::cout<<(std::string(80,'/'))<<std::endl;
+               // std::cout<<(std::string(80,'/'))<<std::endl;
         }
-        posi[tdc]=pos;
-        leadingFine[tdc] = c_hit;
-        leadingCoarse[tdc] = corine((*word>>9)&coarse_mask,&leadingFine[tdc]);
-        leadingFlag[tdc] = true;
+        leadingFine[tdc/2][channel] = c_hit;
+        leadingCoarse[tdc/2][channel] = corine((*word>>9)&coarse_mask,&leadingFine[tdc/2][channel]);
+        leadingFlag[tdc/2][channel] = true;
 
       }
       //dealing with trailing edge; only if there was a previous leading edge
-      else if(tdc > 1 && leadingFlag[tdc-2] == true){ 
-        std::cout<<"Trailing edge found"<<std::endl;
+      else if((tdc ==1 || tdc == 3)){ 
+        //std::cout<<"Trailing edge found"<<std::endl;
         //std::cout<<pos<<std::endl;
-        posf[tdc-2]=pos;
         //removed subtracting leading coarse time for now
         uint64_t trailingCoarse = (corine((*word>>9)&coarse_mask,&c_hit));//-leadingCoarse[tdc-2];
-        write_hit(fout, word, leadingFine[tdc-2], leadingCoarse[tdc-2], c_hit, trailingCoarse, tdc, count);
-        leadingFlag[tdc-2]=false;
+        if(leadingFlag[tdc/3][channel] == true) write_hit(fout, word, leadingFine[tdc/3][channel], leadingCoarse[tdc/3][channel], c_hit, trailingCoarse, tdc-2, tdc, count);
+        else write_hit(fout, word, c_hit, trailingCoarse, 0xff, 0x7f, tdc, tdc, count);
+        leadingFlag[tdc/3][channel] = false;
         //std::cout<<"Leading/trailing positions for last write: "<<posi[tdc-2]<<" "<<pos<<std::endl;
               //std::cout<<(std::string(80,'/'))<<std::endl;
       }
@@ -221,7 +210,8 @@ const std::string outfilename="calibtest51.dat";
   char *buffer = new char[main_header.staging_size];
 
   /** open output file **/
-  std::fstream fout(outfilename, std::fstream::out | std::fstream::out | std::ofstream::binary);
+  //deleted a second std::fstream::out below
+  std::fstream fout(outfilename, std::fstream::out | std::ofstream::binary);
   fout.write(reinterpret_cast<char*>(&main_header), sizeof(main_header_t));
   /** loop over data **/
   buffer_header_t buffer_header;
@@ -264,7 +254,6 @@ const std::string outfilename="calibtest51.dat";
 //Each bit is 32768(rollover cycles)/23^2 =0.0035ns
 //Decide on how to read in tdc parameters, 64 kbits .dat, do .txt for now
 
-//Start looking at vhdl
 
 //1/320=0.003125ms but
 //1/394 is the coarse lsb EIC, make it a const variable
@@ -277,3 +266,22 @@ const std::string outfilename="calibtest51.dat";
 //check that the ordering of the 2 halves of the hit word are correct
 //maybe investigate why pos, posf, and posi are being treated as hex. This is not (yet) the case in cdecoder51
 //check if only warp is skipping cout streams or if terminal does it too
+
+//K-flag: 0 for 51-bit hit word, 1 for "else"
+//FEB ID: designates one of four ALCOrs connected to an RDO
+//Channels: in this case are equivalent to pixel id
+//In case of leading timeout: set the trailing TDC ID equal to leading as well as coarse and trailing bits maxxed out
+//Trailing edge orphan: set leading TDC equal to trailing, trailing time bits set to zero, leading set to the values recieved for the trailing signal
+
+/*Testing:
+Ignore kcodes
+all test files labeled as output_ColXX_notsorted.txt
+keep 1C,5C,9C
+dout has the full file with header
+
+*/
+
+//check if the case of matching a later timestamp that came earlier as opposed to an earlier timestamp that came later is possible, maybe use root
+//check parameters in file stream declarations
+
+//For meeting: check if calibration applies to tdcs or pixels

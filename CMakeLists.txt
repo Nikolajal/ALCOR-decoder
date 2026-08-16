@@ -14,5 +14,6 @@ add_executable(ALCOR_decoder
         calib.cpp
         cdecoder.cc
         crcheck.cpp
-        calib51Q.cpp)
+        calib51Q.cpp
+        calib51.cpp)
 
