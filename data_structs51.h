@@ -1,6 +1,6 @@
 //data_structs.h - stores all structs from original decoder.cc code
-#ifndef DATASTRUCTS_H
-#define DATASTRUCTS_H
+#ifndef DATASTRUCTS51_H
+#define DATASTRUCTS51_H
 #include <iostream>
 struct main_header_t {
     uint32_t caffe;
@@ -65,15 +65,15 @@ struct alcor_hit_51_t {
     uint64_t fine_lead : 9;
     uint64_t coarse_lead : 13;
     uint64_t tdc_lead : 2;
-    uint64_t pixel  : 3;
-    uint64_t column : 3;
     uint64_t fine_trail : 9;
     uint64_t coarse_trail : 7;
     uint64_t tdc_trail : 2;
+    uint64_t pixel  : 3;
+    uint64_t column : 3;
     uint64_t FEB_ID : 2;
-    uint64_t K_code : 2;
+    uint64_t K_code : 1;
     void print() {
-        printf(" hit: %d %d %d %d %d %d %d %d %d %d \n", K_code, FEB_ID, tdc_trail, coarse_trail, fine_trail, column, pixel, tdc_lead ,  coarse_lead,  fine_lead);
+        printf(" hit: %d %d %d %d %d %d %d %d %d %d \n", K_code, FEB_ID, column, pixel, tdc_trail, coarse_trail, fine_trail, tdc_lead ,  coarse_lead,  fine_lead);
     }
     bool operator==(alcor_hit_51_t t) {
         return fine_lead == t.fine_lead && fine_trail == t.fine_trail && coarse_lead == t.coarse_lead
