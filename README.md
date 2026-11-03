@@ -13,3 +13,11 @@ Latest 32-bit procedure to check calibrated output
 1. With alcdaq.fifo_3.dat and parameters.txt in directory, compile calib.cpp with clang and run  
 2. Using ROOT, load and run cdecoder.cc  
 3. Once more using ROOT, load and run crcheck.cpp
+
+Latest 51-bit procedure to check calibrated output is pending, but uses cdecoder51.cc
+
+Latest CSV procedure to check output (matched only)
+1. With IF_64/SR_DC1500kHz_PHY3kHz_shutter7.5ns/output_Col3_notsorted.csv, data_structs51.h, and parameters.txt in the directory, compile and run calibCSV.cpp
+2. Using clang, compile and run CSVcheck.cpp. If it shows misses as 0, then the output passes. 
+
+This is probably not a definitive test, but as close to one as is reasonable
